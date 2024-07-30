@@ -5,6 +5,10 @@ import ollama
 from datetime import datetime, timedelta
 import asyncio
 from dotenv import load_dotenv
+import logging
+import httpx
+
+logging.basicConfig(level=logging.INFO, filename="bot_logs.log")
 
 load_dotenv()
 TOKEN = os.getenv("DC_TLDR_BOT_TOKEN")
@@ -16,11 +20,10 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-ollama_client = ollama.Client()
+ollama_client = ollama.Client(timeout=httpx.Timeout(120.0, connect=60.0))
 
 
 async def generate_tldr(channel, hours, custom_message, model):
-    # Get messages from the past specified hours
     after_time = datetime.utcnow() - timedelta(hours=hours)
     messages = []
     async for message in channel.history(limit=None, after=after_time):
@@ -29,11 +32,11 @@ async def generate_tldr(channel, hours, custom_message, model):
     # messages.reverse()
 
     if os.getenv("LANGUAGE") == "CZ":
-        prompt = f"Shrň následující konverzaci mezi uživateli na Discordu, buď stručný, řekni hlavní věci co se řešily a co kdo říkal:\n\n"
+        prompt = f"Shrň následující konverzaci mezi uživateli na Discordu, buď stručný, řekni hlavní věci co se řešily a jaký názor zastával:\n\n"
     else:
         prompt = f"Summarize the following conversation in a concise TLDR format:\n\n"
     prompt += "\n".join(messages)
-    print(prompt)
+    logging.info(prompt)
 
     if custom_message:
         if os.getenv("LANGUAGE") == "CZ":
@@ -45,7 +48,9 @@ async def generate_tldr(channel, hours, custom_message, model):
     try:
         return ollama_client.generate(model=model, prompt=prompt, stream=True)
     except Exception as e:
+        logging.error(f"{str(e)}")
         return f"Error generating TLDR: {str(e)}"
+
 
 
 @bot.command(name="tldr")
@@ -69,12 +74,12 @@ async def tldr(ctx, hours: int = 1, *, custom: str = ""):
         # Stream the response and update the message
         for chunk in stream:
             generated_content += chunk["response"]
-            if len(generated_content) % 20 == 0:  # Update every 20 characters
+            if len(generated_content) % 10 == 0:  # Update every 20 characters
                 await initial_message.edit(
                     content=f"TLDR of the last {hours} hour(s):\n\n{generated_content}"
                 )
                 # Add a small delay to avoid rate limiting
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(2)
 
         # Send the final message
         await initial_message.edit(
@@ -83,6 +88,7 @@ async def tldr(ctx, hours: int = 1, *, custom: str = ""):
 
     except Exception as e:
         await user_dm.send(f"An error occurred: {str(e)}")
+        logging.error(f"{str(e)}")
 
 
 @bot.command(name="models")
